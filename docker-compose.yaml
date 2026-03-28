@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: root
       POSTGRES_DB: warehouse
     volumes:
-      - warehouse-volume:/var/lib/postgresql/data
+      - ./data-volume:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
@@ -31,10 +31,7 @@ services:
   orquestador:
     image: mageai/mageai
     volumes:
-      - data-orquestador:/home/src
+      - ./mage-volume:/home/src
     ports:
       - "6789:6789"
     command: /app/run_app.sh mage start orquestador
-volumes:
-  warehouse-volume:
-  data-orquestador:
