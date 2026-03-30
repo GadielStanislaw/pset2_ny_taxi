@@ -1,0 +1,2 @@
+{"operation": "create", "resource": {"type": "pipeline", "uuid": "raw_ingestion_pipeline"}, "timestamp": 1774714656, "user": 1}
+{"operation": "create", "resource": {"type": "pipeline", "uuid": "clean_transformation_pipeline"}, "timestamp": 1774714999, "user": 1}
