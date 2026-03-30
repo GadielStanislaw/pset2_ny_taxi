@@ -15,12 +15,6 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
-#  ingesta-datos:
-#    image: ingesta-datos
-#    build: .
-#    depends_on:
-#      data-warehouse:
-#        condition: service_healthy
   warehouse-ui:
     image: dpage/pgadmin4
     environment:
