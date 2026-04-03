@@ -11,24 +11,56 @@ if 'test' not in globals():
 
 @data_loader
 def load_data(*args, **kwargs):
-    schema_name    = 'raw'
-    table_name     = 'taxi_trips_ny'
     config_path    = path.join(get_repo_path(), 'io_config.yaml')
     config_profile = 'default'
 
-    query = f"SELECT * FROM {schema_name}.{table_name} LIMIT 100"
+    queries = {
+        'vendor_ids': """
+            SELECT DISTINCT CAST(vendorid AS INTEGER) AS vendor_id
+            FROM raw.taxi_trips_ny
+            WHERE vendorid IS NOT NULL
+        """,
+        'payment_types': """
+            SELECT DISTINCT CAST(payment_type AS INTEGER) AS payment_type
+            FROM raw.taxi_trips_ny
+            WHERE payment_type IS NOT NULL
+        """,
+        'pu_location_ids': """
+            SELECT DISTINCT CAST(pulocationid AS INTEGER) AS pu_location_id
+            FROM raw.taxi_trips_ny
+            WHERE pulocationid IS NOT NULL
+        """,
+        'do_location_ids': """
+            SELECT DISTINCT CAST(dolocationid AS INTEGER) AS do_location_id
+            FROM raw.taxi_trips_ny
+            WHERE dolocationid IS NOT NULL
+        """,
+        'pickup_hours': """
+            SELECT DISTINCT DATE_TRUNC('hour', tpep_pickup_datetime)::TIMESTAMP AS pickup_datetime
+            FROM raw.taxi_trips_ny
+            WHERE tpep_pickup_datetime IS NOT NULL
+              AND tpep_pickup_datetime >= '2015-01-01'
+              AND tpep_pickup_datetime <= '2025-12-31'
+            ORDER BY 1
+        """,
+    }
 
+    result = {}
     with Postgres.with_config(ConfigFileLoader(config_path, config_profile)) as loader:
-        df = loader.load(query)
+        for name, sql in queries.items():
+            df = loader.load(sql)
+            result[name] = df
+            print(f"  {name:20s}: {len(df):>6,} rows")
 
-    print(f"Loaded {len(df):,} rows from {schema_name}.{table_name}")
-    return df
+    print("\nDimension candidate data loaded.")
+    return result
 
 
 @test
 def test_output(output, *args) -> None:
-    """
-    Template code for testing the output of the block.
-    """
-    assert output is not None, 'The output is undefined'
-    assert len(output) > 0,    'The dataframe is empty'
+    assert isinstance(output, dict), 'Output must be a dict'
+    for key in ['vendor_ids', 'payment_types', 'pu_location_ids',
+                'do_location_ids', 'pickup_hours']:
+        assert key in output, f'Missing key: {key}'
+        assert len(output[key]) > 0, f'{key} is empty'
+    print("Dimension candidate data loaded ✓")
