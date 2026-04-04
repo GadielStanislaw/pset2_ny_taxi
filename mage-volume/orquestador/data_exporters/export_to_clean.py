@@ -171,21 +171,21 @@ def export_data_to_postgres(tables: dict, **kwargs) -> None:
 
     with Postgres.with_config(ConfigFileLoader(config_path, config_profile)) as loader:
 
-        # Step 1: recreate clean schema
+        
         print("\n── Creating schema and tables...")
         for sql in CREATE_STATEMENTS:
             loader.execute(sql)
             loader.conn.commit()
             print(f"  ✓ {sql.strip().splitlines()[0][:70]}")
 
-        # Step 2: insert -1 sentinel rows
+        
         print("\n── Inserting unknown (-1) sentinel rows...")
         for sql in UNKNOWN_ROWS:
             loader.execute(sql)
             loader.conn.commit()
             print(f"  ✓ {sql[:70]}")
 
-        # Step 3: insert dimension tables
+        
         print("\n── Loading dimension tables...")
         for table_name in DIM_LOAD_ORDER:
             df = tables[table_name]
@@ -198,11 +198,11 @@ def export_data_to_postgres(tables: dict, **kwargs) -> None:
                     table_name,
                     index=False,
                     if_exists='append',
-                    auto_clean_name=False,      # ← keeps zone, year, month, day, hour as-is
+                    auto_clean_name=False,      
                 )
             print(f"  ✓ clean.{table_name}: {len(df):,} rows  cols={list(df.columns)}")
 
-        # Step 4: load fact_trips month by month
+        
         print("\n── Detecting date range in raw.taxi_trips_ny...")
         date_range = loader.load("""
             SELECT
@@ -251,7 +251,7 @@ def export_data_to_postgres(tables: dict, **kwargs) -> None:
                     'fact_trips',
                     index=False,
                     if_exists='append',
-                    auto_clean_name=False,      # ← same fix for fact columns
+                    auto_clean_name=False,      
                 )
                 trip_id += len(fact_chunk)
 
