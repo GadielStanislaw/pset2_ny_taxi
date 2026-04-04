@@ -293,8 +293,8 @@ LIMIT 20;
 SELECT
     p.payment_type_name,
     COUNT(*)                    AS viajes,
-    ROUND(AVG(f.fare_amount),2) AS tarifa_promedio,
-    ROUND(AVG(f.tip_amount),2)  AS propina_promedio
+    ROUND(AVG(f.fare_amount)::numeric, 2)   AS tarifa_promedio,
+    ROUND(AVG(f.tip_amount)::numeric, 2)    AS propina_promedio
 FROM clean.fact_trips       f
 JOIN clean.dim_payment_type p ON f.payment_type_key = p.payment_type_key
 WHERE f.payment_type_key != -1
