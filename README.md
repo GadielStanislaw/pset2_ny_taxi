@@ -149,24 +149,20 @@ Deberías ver tres contenedores activos: `data-warehouse`, `orquestador` y `ware
 
 ---
 
-## Cómo configurar credenciales en Mage
+## Credenciales en Mage
 
-Las credenciales de PostgreSQL están gestionadas mediante **Mage Secrets** — variables seguras almacenadas dentro de Mage AI, no en texto plano en el repositorio.
+Las credenciales de PostgreSQL están preconfiguradas en el repositorio mediante **Mage Secrets**. No es necesario configurar nada — al levantar el entorno con `docker compose up`, Mage carga automáticamente los secrets desde el volumen incluido en el proyecto.
 
-Antes de ejecutar cualquier pipeline, debes registrar los cuatro secrets siguientes en Mage:
+Los secrets ya registrados son:
 
-1. Abrir Mage en http://localhost:6789
-2. Ir a **Settings → Secrets**
-3. Crear los siguientes secrets con exactamente estos nombres y valores:
+| Nombre del secret | Valor            |
+|-------------------|------------------|
+| `pg_db`           | `warehouse`      |
+| `pg_host`         | `data-warehouse` |
+| `pg_user`         | `root`           |
+| `pg_password`     | `root`           |
 
-| Nombre del secret | Valor           |
-|-------------------|-----------------|
-| `pg_db`           | `warehouse`     |
-| `pg_host`         | `data-warehouse`|
-| `pg_user`         | `root`          |
-| `pg_password`     | `root`          |
-
-> **¿Por qué Mage Secrets?** El archivo `io_config.yaml` referencia estos valores con `{{ mage_secret_var('nombre') }}` en lugar de texto plano. Esto evita que las credenciales queden expuestas directamente en el repositorio. El paso de registro es único — una vez creados los secrets, los pipelines los leen automáticamente en cada ejecución.
+> El archivo `io_config.yaml` referencia estos valores con `{{ mage_secret_var('nombre') }}` en lugar de texto plano. Los pipelines los leen automáticamente en cada ejecución.
 
 ---
 
