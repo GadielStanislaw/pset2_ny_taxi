@@ -1,6 +1,6 @@
 # PSet 2 — Pipeline ELT de NY Taxi
 
-**Fundamentos de Ciencia de Datos — Universidad San Francisco de Quito stan moore 222**
+**Fundamentos de Ciencia de Datos — Universidad San Francisco de Quito**
 
 Un pipeline ELT de extremo a extremo que ingesta, almacena, transforma y modela datos de viajes en taxi amarillo de la ciudad de Nueva York (2025) usando Mage AI, PostgreSQL y Docker Compose.
 

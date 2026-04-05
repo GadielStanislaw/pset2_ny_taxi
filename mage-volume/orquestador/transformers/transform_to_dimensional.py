@@ -71,7 +71,7 @@ def transform(data, *args, **kwargs):
     dim_dropoff  = build_dim_location(do_loc_ids, 'do_location_key')
     dim_datetime = build_dim_datetime(pickup_hours)
 
-    print("── Dimension tables built ──")
+    print("?? Dimension tables built ??")
     print(f"  dim_vendor           : {len(dim_vendor):>6,} rows  cols={list(dim_vendor.columns)}")
     print(f"  dim_payment_type     : {len(dim_payment):>6,} rows  cols={list(dim_payment.columns)}")
     print(f"  dim_pickup_location  : {len(dim_pickup):>6,} rows  cols={list(dim_pickup.columns)}")
@@ -89,10 +89,10 @@ def transform(data, *args, **kwargs):
 
 @test
 def test_output(output, *args) -> None:
-    assert isinstance(output, dict)
+    assert isinstance(output, dict), 'Output must be a dict'
     for t in ['dim_vendor', 'dim_payment_type', 'dim_pickup_location',
               'dim_dropoff_location', 'dim_datetime']:
         assert t in output and len(output[t]) > 0, f'{t} missing or empty'
     assert 'zone' in output['dim_pickup_location'].columns, '"zone" column missing'
     assert 'year' in output['dim_datetime'].columns,        '"year" column missing'
-    print("All dimension tables verified ✓")
+    print("All dimension tables verified.")

@@ -2,11 +2,12 @@ from mage_ai.settings.repo import get_repo_path
 from mage_ai.io.config import ConfigFileLoader
 from mage_ai.io.postgres import Postgres
 from os import path
-import pandas as pd
 import math
+import pandas as pd
 
 if 'data_exporter' not in globals():
     from mage_ai.data_preparation.decorators import data_exporter
+
 
 CHUNK_SIZE = 50_000
 
@@ -47,13 +48,14 @@ CREATE_STATEMENTS = [
         is_weekend     BOOLEAN
     )""",
 
+    # No FK constraints on fact_trips -- added after bulk load for performance
     """CREATE TABLE clean.fact_trips (
-        trip_id            INTEGER PRIMARY KEY,
-        vendor_key         INTEGER REFERENCES clean.dim_vendor(vendor_key),
-        payment_type_key   INTEGER REFERENCES clean.dim_payment_type(payment_type_key),
-        pu_location_key    INTEGER REFERENCES clean.dim_pickup_location(pu_location_key),
-        do_location_key    INTEGER REFERENCES clean.dim_dropoff_location(do_location_key),
-        datetime_key       INTEGER REFERENCES clean.dim_datetime(datetime_key),
+        trip_id            SERIAL           PRIMARY KEY,
+        vendor_key         INTEGER,
+        payment_type_key   INTEGER,
+        pu_location_key    INTEGER,
+        do_location_key    INTEGER,
+        datetime_key       INTEGER,
         pickup_datetime    TIMESTAMP,
         dropoff_datetime   TIMESTAMP,
         passenger_count    INTEGER,
@@ -64,13 +66,6 @@ CREATE_STATEMENTS = [
         tolls_amount       DOUBLE PRECISION,
         total_amount       DOUBLE PRECISION
     )""",
-
-    "CREATE INDEX idx_fact_vendor   ON clean.fact_trips (vendor_key)",
-    "CREATE INDEX idx_fact_payment  ON clean.fact_trips (payment_type_key)",
-    "CREATE INDEX idx_fact_pu_loc   ON clean.fact_trips (pu_location_key)",
-    "CREATE INDEX idx_fact_do_loc   ON clean.fact_trips (do_location_key)",
-    "CREATE INDEX idx_fact_datetime ON clean.fact_trips (datetime_key)",
-    "CREATE INDEX idx_fact_dt       ON clean.fact_trips (pickup_datetime)",
 ]
 
 UNKNOWN_ROWS = [
@@ -90,105 +85,91 @@ DIM_LOAD_ORDER = [
 ]
 
 
-def clean(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.rename(columns={
-        'vendorid':              'vendor_id',
-        'tpep_pickup_datetime':  'pickup_datetime',
-        'tpep_dropoff_datetime': 'dropoff_datetime',
-        'pulocationid':          'pu_location_id',
-        'dolocationid':          'do_location_id',
-        'ratecodeid':            'rate_code_id',
-    })
-    for col in ['pickup_datetime', 'dropoff_datetime']:
-        df[col] = pd.to_datetime(df[col], errors='coerce')
-    for col in ['passenger_count', 'trip_distance', 'fare_amount',
-                'tip_amount', 'total_amount', 'payment_type',
-                'vendor_id', 'pu_location_id', 'do_location_id']:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-    if 'tolls_amount' in df.columns:
-        df['tolls_amount'] = pd.to_numeric(df['tolls_amount'], errors='coerce')
-    else:
-        df['tolls_amount'] = 0.0
+FACT_INSERT_SQL = """
+INSERT INTO clean.fact_trips (
+    vendor_key,
+    payment_type_key,
+    pu_location_key,
+    do_location_key,
+    datetime_key,
+    pickup_datetime,
+    dropoff_datetime,
+    passenger_count,
+    trip_distance,
+    trip_duration_min,
+    fare_amount,
+    tip_amount,
+    tolls_amount,
+    total_amount
+)
+SELECT
+    COALESCE(CAST(vendorid     AS INTEGER), -1)                                              AS vendor_key,
+    COALESCE(CAST(payment_type AS INTEGER), -1)                                              AS payment_type_key,
+    COALESCE(CAST(pulocationid AS INTEGER), -1)                                              AS pu_location_key,
+    COALESCE(CAST(dolocationid AS INTEGER), -1)                                              AS do_location_key,
+    COALESCE(d.datetime_key, -1)                                                             AS datetime_key,
+    r.tpep_pickup_datetime                                                                   AS pickup_datetime,
+    r.tpep_dropoff_datetime                                                                  AS dropoff_datetime,
+    GREATEST(COALESCE(CAST(passenger_count AS INTEGER), 1), 1)                              AS passenger_count,
+    ROUND(COALESCE(CAST(trip_distance AS DOUBLE PRECISION), 0)::numeric, 2)                 AS trip_distance,
+    ROUND((EXTRACT(EPOCH FROM (r.tpep_dropoff_datetime - r.tpep_pickup_datetime)) / 60.0)::numeric, 2)
+                                                                                             AS trip_duration_min,
+    ROUND(COALESCE(CAST(fare_amount  AS DOUBLE PRECISION), 0)::numeric, 2)                  AS fare_amount,
+    ROUND(COALESCE(CAST(tip_amount   AS DOUBLE PRECISION), 0)::numeric, 2)                  AS tip_amount,
+    ROUND(COALESCE(CAST(tolls_amount AS DOUBLE PRECISION), 0)::numeric, 2)                  AS tolls_amount,
+    ROUND(COALESCE(CAST(total_amount AS DOUBLE PRECISION), 0)::numeric, 2)                  AS total_amount
+FROM raw.taxi_trips_ny r
+LEFT JOIN clean.dim_datetime d
+       ON DATE_TRUNC('hour', r.tpep_pickup_datetime) = d.datetime_hour
+WHERE r.tpep_pickup_datetime  IS NOT NULL
+  AND r.tpep_dropoff_datetime IS NOT NULL
+  AND r.pulocationid          IS NOT NULL
+  AND r.dolocationid          IS NOT NULL
+  AND r.tpep_pickup_datetime  >= '2025-01-01'
+  AND r.tpep_pickup_datetime  <  '2026-01-01'
+  AND r.tpep_pickup_datetime  <= r.tpep_dropoff_datetime
+  AND EXTRACT(EPOCH FROM (r.tpep_dropoff_datetime - r.tpep_pickup_datetime)) / 60.0
+          BETWEEN 0 AND 600
+  AND COALESCE(CAST(r.trip_distance AS DOUBLE PRECISION), 0) >= 0
+  AND COALESCE(CAST(r.trip_distance AS DOUBLE PRECISION), 0) <  500
+  AND COALESCE(CAST(r.fare_amount   AS DOUBLE PRECISION), 0) >= 0
+  AND COALESCE(CAST(r.total_amount  AS DOUBLE PRECISION), 0) >= 0
+  AND COALESCE(CAST(r.tip_amount    AS DOUBLE PRECISION), 0) >= 0
+"""
 
-    df = df.dropna(subset=['pickup_datetime', 'dropoff_datetime',
-                           'pu_location_id', 'do_location_id'])
-    df = df[
-        (df['pickup_datetime']  >= '2015-01-01') &
-        (df['dropoff_datetime'] <= '2025-12-31') &
-        (df['pickup_datetime']  <= df['dropoff_datetime'])
-    ]
-    df['trip_duration_min'] = (
-        (df['dropoff_datetime'] - df['pickup_datetime']).dt.total_seconds() / 60
-    ).round(2)
-    df = df[
-        (df['trip_duration_min']        >  0)   &
-        (df['trip_duration_min']        < 600)  &
-        (df['trip_distance'].fillna(0) >= 0)    &
-        (df['trip_distance'].fillna(0) < 500)   &
-        (df['fare_amount'].fillna(0)   >= 0)    &
-        (df['total_amount'].fillna(0)  >= 0)    &
-        (df['tip_amount'].fillna(0)    >= 0)
-    ]
-    df['passenger_count'] = df['passenger_count'].fillna(1).clip(lower=1).astype(int)
-    return df.drop_duplicates().reset_index(drop=True)
 
-
-def build_fact_chunk(df: pd.DataFrame, dt_lookup: dict, trip_id_start: int) -> pd.DataFrame:
-    return pd.DataFrame({
-        'trip_id':           range(trip_id_start, trip_id_start + len(df)),
-        'vendor_key':        df['vendor_id'].fillna(-1).astype(int).values,
-        'payment_type_key':  df['payment_type'].fillna(-1).astype(int).values,
-        'pu_location_key':   df['pu_location_id'].fillna(-1).astype(int).values,
-        'do_location_key':   df['do_location_id'].fillna(-1).astype(int).values,
-        'datetime_key':      (df['pickup_datetime']
-                               .dt.floor('h')
-                               .map(dt_lookup)
-                               .fillna(-1)
-                               .astype(int)
-                               .values),
-        'pickup_datetime':   df['pickup_datetime'].values,
-        'dropoff_datetime':  df['dropoff_datetime'].values,
-        'passenger_count':   df['passenger_count'].astype(int).values,
-        'trip_distance':     df['trip_distance'].round(2).values,
-        'trip_duration_min': df['trip_duration_min'].values,
-        'fare_amount':       df['fare_amount'].round(2).values,
-        'tip_amount':        df['tip_amount'].fillna(0).round(2).values,
-        'tolls_amount':      df['tolls_amount'].fillna(0).round(2).values,
-        'total_amount':      df['total_amount'].round(2).values,
-    })
+def _execute(loader, sql):
+    """Run a single SQL statement and commit."""
+    with loader.conn.cursor() as cur:
+        cur.execute(sql)
+    loader.conn.commit()
 
 
 @data_exporter
-def export_data_to_postgres(tables: dict, **kwargs) -> None:
+def export_data_to_postgres(data: dict, **kwargs) -> None:
     config_path    = path.join(get_repo_path(), 'io_config.yaml')
     config_profile = 'default'
 
-    dt_lookup = dict(zip(
-        tables['dim_datetime']['datetime_hour'].astype('datetime64[h]'),
-        tables['dim_datetime']['datetime_key'],
-    ))
-    print(f"datetime lookup built: {len(dt_lookup):,} entries")
-
     with Postgres.with_config(ConfigFileLoader(config_path, config_profile)) as loader:
+        if not hasattr(loader, '_ctx'):
+            loader.open()
 
-        
-        print("\n── Creating schema and tables...")
+        # 1. DDL
+        print("\n>> Creating schema and tables...")
         for sql in CREATE_STATEMENTS:
-            loader.execute(sql)
-            loader.conn.commit()
-            print(f"  ✓ {sql.strip().splitlines()[0][:70]}")
+            _execute(loader, sql)
+            print(f"  OK {sql.strip().splitlines()[0][:70]}")
 
-        
-        print("\n── Inserting unknown (-1) sentinel rows...")
+        # 2. Sentinel rows
+        print("\n>> Inserting sentinel (-1) rows...")
         for sql in UNKNOWN_ROWS:
-            loader.execute(sql)
-            loader.conn.commit()
-            print(f"  ✓ {sql[:70]}")
+            _execute(loader, sql)
+            print(f"  OK {sql[:70]}")
 
-        
-        print("\n── Loading dimension tables...")
+        # 3. Dimension tables
+        print("\n>> Loading dimension tables...")
         for table_name in DIM_LOAD_ORDER:
-            df = tables[table_name]
+            df = data[table_name]
             n_chunks = math.ceil(len(df) / CHUNK_SIZE)
             for i in range(n_chunks):
                 chunk = df.iloc[i * CHUNK_SIZE:(i + 1) * CHUNK_SIZE]
@@ -198,66 +179,34 @@ def export_data_to_postgres(tables: dict, **kwargs) -> None:
                     table_name,
                     index=False,
                     if_exists='append',
-                    auto_clean_name=False,      
+                    auto_clean_name=False,
                 )
-            print(f"  ✓ clean.{table_name}: {len(df):,} rows  cols={list(df.columns)}")
+            print(f"  OK clean.{table_name}: {len(df):,} rows")
 
-        
-        print("\n── Detecting date range in raw.taxi_trips_ny...")
-        date_range = loader.load("""
-            SELECT
-                DATE_TRUNC('month', MIN(tpep_pickup_datetime))::TIMESTAMP AS min_month,
-                DATE_TRUNC('month', MAX(tpep_pickup_datetime))::TIMESTAMP AS max_month
-            FROM raw.taxi_trips_ny
-            WHERE tpep_pickup_datetime IS NOT NULL
-        """)
-        min_month = pd.Timestamp(date_range['min_month'].iloc[0])
-        max_month = pd.Timestamp(date_range['max_month'].iloc[0])
-        months    = pd.date_range(start=min_month, end=max_month, freq='MS')
-        print(f"  Range: {min_month.strftime('%Y-%m')} → {max_month.strftime('%Y-%m')} ({len(months)} months)")
+        # 4. Bulk-load fact_trips (no indexes/FKs yet = fast)
+        print("\n>> Inserting fact_trips (bulk load, indexes added after)...")
+        try:
+            with loader.conn.cursor() as cur:
+                cur.execute(FACT_INSERT_SQL)
+            loader.conn.commit()
+        except Exception as exc:
+            loader.conn.rollback()
+            raise RuntimeError(f"fact_trips INSERT failed: {exc}") from exc
 
-        trip_id         = 1
-        total_fact_rows = 0
+        total = loader.load("SELECT COUNT(*) AS n FROM clean.fact_trips")['n'].iloc[0]
+        print(f"  OK clean.fact_trips: {int(total):,} rows inserted")
 
-        print(f"\n── Loading fact_trips month by month...")
-        for month_start in months:
-            month_end = month_start + pd.DateOffset(months=1)
-            sql = f"""
-                SELECT *
-                FROM raw.taxi_trips_ny
-                WHERE tpep_pickup_datetime >= '{month_start}'
-                  AND tpep_pickup_datetime  < '{month_end}'
-            """
-            df_raw = loader.load(sql)
+        # 5. Indexes — created after bulk load so they don't slow the INSERT
+        print("\n>> Creating indexes on fact_trips...")
+        for sql in [
+            "CREATE INDEX idx_fact_vendor    ON clean.fact_trips (vendor_key)",
+            "CREATE INDEX idx_fact_payment   ON clean.fact_trips (payment_type_key)",
+            "CREATE INDEX idx_fact_pu_loc    ON clean.fact_trips (pu_location_key)",
+            "CREATE INDEX idx_fact_do_loc    ON clean.fact_trips (do_location_key)",
+            "CREATE INDEX idx_fact_datetime  ON clean.fact_trips (datetime_key)",
+            "CREATE INDEX idx_fact_dt        ON clean.fact_trips (pickup_datetime)",
+        ]:
+            _execute(loader, sql)
+            print(f"  OK {sql}")
 
-            if len(df_raw) == 0:
-                print(f"  {month_start.strftime('%Y-%m')}: no rows, skipping")
-                continue
-
-            df_clean     = clean(df_raw)
-            rows_removed = len(df_raw) - len(df_clean)
-
-            if len(df_clean) == 0:
-                print(f"  {month_start.strftime('%Y-%m')}: all {len(df_raw):,} removed by cleaning")
-                continue
-
-            n_sub = math.ceil(len(df_clean) / CHUNK_SIZE)
-            for j in range(n_sub):
-                sub        = df_clean.iloc[j * CHUNK_SIZE:(j + 1) * CHUNK_SIZE]
-                fact_chunk = build_fact_chunk(sub, dt_lookup, trip_id)
-                loader.export(
-                    fact_chunk,
-                    'clean',
-                    'fact_trips',
-                    index=False,
-                    if_exists='append',
-                    auto_clean_name=False,      
-                )
-                trip_id += len(fact_chunk)
-
-            total_fact_rows += len(df_clean)
-            print(f"  {month_start.strftime('%Y-%m')}: {len(df_raw):,} raw "
-                  f"→ {len(df_clean):,} clean  ({rows_removed:,} removed)  "
-                  f"cumulative: {total_fact_rows:,}")
-
-    print(f"\n✅ Star schema complete — {total_fact_rows:,} fact rows, trip_ids 1–{trip_id - 1}")
+    print("\n>> Star schema complete - clean schema is ready")
