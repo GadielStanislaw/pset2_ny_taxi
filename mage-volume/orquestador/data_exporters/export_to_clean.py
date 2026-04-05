@@ -48,7 +48,7 @@ CREATE_STATEMENTS = [
         is_weekend     BOOLEAN
     )""",
 
-    # No FK constraints on fact_trips -- added after bulk load for performance
+
     """CREATE TABLE clean.fact_trips (
         trip_id            SERIAL           PRIMARY KEY,
         vendor_key         INTEGER,
@@ -154,19 +154,18 @@ def export_data_to_postgres(data: dict, **kwargs) -> None:
         if not hasattr(loader, '_ctx'):
             loader.open()
 
-        # 1. DDL
+
         print("\n>> Creating schema and tables...")
         for sql in CREATE_STATEMENTS:
             _execute(loader, sql)
             print(f"  OK {sql.strip().splitlines()[0][:70]}")
 
-        # 2. Sentinel rows
         print("\n>> Inserting sentinel (-1) rows...")
         for sql in UNKNOWN_ROWS:
             _execute(loader, sql)
             print(f"  OK {sql[:70]}")
 
-        # 3. Dimension tables
+
         print("\n>> Loading dimension tables...")
         for table_name in DIM_LOAD_ORDER:
             df = data[table_name]
@@ -183,7 +182,7 @@ def export_data_to_postgres(data: dict, **kwargs) -> None:
                 )
             print(f"  OK clean.{table_name}: {len(df):,} rows")
 
-        # 4. Bulk-load fact_trips (no indexes/FKs yet = fast)
+
         print("\n>> Inserting fact_trips (bulk load, indexes added after)...")
         try:
             with loader.conn.cursor() as cur:
@@ -196,7 +195,7 @@ def export_data_to_postgres(data: dict, **kwargs) -> None:
         total = loader.load("SELECT COUNT(*) AS n FROM clean.fact_trips")['n'].iloc[0]
         print(f"  OK clean.fact_trips: {int(total):,} rows inserted")
 
-        # 5. Indexes — created after bulk load so they don't slow the INSERT
+
         print("\n>> Creating indexes on fact_trips...")
         for sql in [
             "CREATE INDEX idx_fact_vendor    ON clean.fact_trips (vendor_key)",

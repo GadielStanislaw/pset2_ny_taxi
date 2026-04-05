@@ -6,7 +6,7 @@ if 'test' not in globals():
 
 BASE_URL = "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_{year}-{month:02d}.parquet"
 YEAR   = 2025
-MONTHS = range(1, 2)
+MONTHS = range(1, 13)
 
 @data_loader
 def load_data(*args, **kwargs):
